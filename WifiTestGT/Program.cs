@@ -1,72 +1,79 @@
-﻿using System;
-using System.Collections;
-using System.Threading;
-using Microsoft.SPOT;
-using Microsoft.SPOT.Presentation;
-using Microsoft.SPOT.Presentation.Controls;
-using Microsoft.SPOT.Presentation.Media;
-using Microsoft.SPOT.Presentation.Shapes;
-using Microsoft.SPOT.Touch;
-
-using Gadgeteer.Networking;
-using GT = Gadgeteer;
-using GTM = Gadgeteer.Modules;
-using Gadgeteer.Modules.GHIElectronics;
-using uPLibrary.Networking.M2Mqtt;
-using uPLibrary.Networking.M2Mqtt.Messages;
-using System.Text;
+﻿using Microsoft.SPOT;
+using Microsoft.SPOT.Net.NetworkInformation;
 using System;
 using System.Net;
-using Microsoft.SPOT.Net.NetworkInformation;
-using GHI.Networking;
-using Microsoft.SPOT.Hardware;
+using System.Text;
+using System.Threading;
+using uPLibrary.Networking.M2Mqtt;
+using uPLibrary.Networking.M2Mqtt.Messages;
+using GT = Gadgeteer;
 
 namespace WifiTestGT
 {
    public partial class Program
     {
-        static readonly string MqttBrokerIp = "192.241.182.227";
-        static readonly string MqttTopic = "/device/xxxxx/key/xxxxxx";
-        static readonly string Ssid = "xxxx";
-        static readonly string Ssid_Password = "xxxx";
+        static readonly string MqttBrokerIp = "54.174.197.219";
+        static readonly string MqttTopic = "/device/xxxxx/key/xxxxx";  
+        static readonly string Ssid = "xxxxx";  
+        static readonly string Ssid_Password = "xxxxx";  
 
         private MqttClient mqttClient;
         private GT.Timer wifiTimer;
 
         public Program() {
 
-            wifiTimer = new GT.Timer(1000);
-            mqttClient = new MqttClient(IPAddress.Parse(MqttBrokerIp));          
+            wifiTimer = new GT.Timer(2000); 
+            mqttClient = new MqttClient(IPAddress.Parse(MqttBrokerIp));
+          
         }
         private void ProgramStarted()
         {
             tempHumidity.MeasurementInterval = 5000;
+                     
 
             wifiTimer.Tick += (timer) => {
                 timer.Stop();
-           
-                wifi_RS21.NetworkInterface.Open();
-                wifi_RS21.NetworkInterface.EnableDhcp();
-                wifi_RS21.NetworkInterface.EnableDynamicDns();
-                wifi_RS21.NetworkInterface.Join(Ssid, Ssid_Password);
-                 
-                Debug.Print("Network joined");    
+
+                try
+                {
+                    wifi_RS21.NetworkInterface.Open();
+                    wifi_RS21.NetworkInterface.EnableDhcp();
+                    wifi_RS21.NetworkInterface.EnableDynamicDns();
+                    wifi_RS21.NetworkInterface.Join(Ssid, Ssid_Password);
+                    while (wifi_RS21.NetworkInterface.IPAddress == "0.0.0.0")
+                    {
+                        Debug.Print("Waiting for DHCP...");
+                        Thread.Sleep(1000);
+                    }
+                    Debug.Print("Network ready to use.");
+
+                    Debug.Print("Conecting to MQTT broker ...");
+                    mqttClient.Connect(Guid.NewGuid().ToString());
+                    Debug.Print("Conected to MQTT broker!");
+
+                    tempHumidity.StartTakingMeasurements();
+                    Debug.Print("Sending measurements");
+                }
+                catch(Exception ex) {
+                    wifiTimer.Start();
+                }
             };
 
-            measurementTimer.Tick += (timer) => {
-                tempHumidity.RequestSingleMeasurement();
-            };
-
-            NetworkChange.NetworkAvailabilityChanged += (sender, e) => {
+            NetworkChange.NetworkAvailabilityChanged += (sender, e) =>  {
                 Debug.Print("Network availability: " + e.IsAvailable.ToString());
-                Thread.Sleep(3000);
-                mqttClient.Connect(Guid.NewGuid().ToString());
-
-                tempHumidity.StartTakingMeasurements();               
-            }; 
+            };
 
             tempHumidity.MeasurementComplete += (sender, e) => {
-                publishMessage("{\"sensors\":[{\"value\":\"" + ((int)e.Temperature) + "\",\"tag\":\"temperature\"},{\"value\":\"" + ((int)e.RelativeHumidity) + "\",\"tag\":\"humidity\"}] }");
+
+                var temperature = "{\"value\":\"" + ((int)e.Temperature) + "\",\"tag\":\"temperature\"}";
+                var humidity = "{\"value\":\"" + ((int)e.RelativeHumidity) + "\",\"tag\":\"humidity\"}";
+              
+                var builder = new StringBuilder("{\"sensors\":[@temperature,@humidity] }");
+
+                builder.Replace("@temperature", temperature);
+                builder.Replace("@humidity", humidity);
+
+                publishMessage(builder.ToString());
 
             };
                        
@@ -75,7 +82,7 @@ namespace WifiTestGT
         
         private void publishMessage(string message)
         {  
-            mqttClient.Publish(MqttTopic, Encoding.UTF8.GetBytes(message), MqttMsgBase.QOS_LEVEL_AT_MOST_ONCE, true); 
+            mqttClient.Publish(MqttTopic, Encoding.UTF8.GetBytes(message), MqttMsgBase.QOS_LEVEL_EXACTLY_ONCE, true); 
         }
         
    }
